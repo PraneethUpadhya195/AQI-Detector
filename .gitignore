@@ -1,0 +1,16 @@
+config.py
+
+*.db
+*.sqlite
+*.sqlite3
+
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+
+venv/
+.venv/
+
+.streamlit/
