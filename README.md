@@ -7,17 +7,14 @@ cd your-repo-name
 
 ## Install requirements
 
-pip install flask streamlit pandas numpy matplotlib requests
+pip install -r requirements.txt
 
 ## Setup config.py
 
-DB_NAME = "YOUR_DB_NAME.db"<br>
-AQICN_TOKEN = "YOUR_TOKEN"<br>
-AQICN_URL = "https://api.waqi.info"<br>
-CITIES = ["Delhi", "Mumbai", "Chennai", "Kolkata", "Bengaluru", "London", "New York"]<br>
+- Create a mongodb atlas cluster.
+- Add this : MONGO_URI = "mongodb+srv://<username>:<password>@<cluster-url>/<db-name>?retryWrites=true&w=majority"
 
 ## Steps to run
 
 1. python -m backend.app
-2. python -m backend.aqi_fetcher
-3. streamlit run frontend/dashboard.py
+2. python -m frontend.dashboard
