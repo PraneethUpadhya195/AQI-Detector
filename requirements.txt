@@ -1,0 +1,7 @@
+flask
+pymongo
+dash
+dash-bootstrap-components
+plotly
+pandas
+requests

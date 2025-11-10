@@ -1,155 +1,240 @@
-import streamlit as st
+import dash
+from dash import dcc, html, Input, Output, State, callback, dash_table
+import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
+import requests
 import pandas as pd
-import numpy as np
-import requests # Used to call our Flask API
-import matplotlib.pyplot as plt
+from datetime import datetime
 
-# Add the parent directory (root of the project) to the Python path
-# This allows us to import 'config' from the root folder
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# --- Configuration ---
+API_BASE_URL = "http://127.0.0.1:5000"
 
-from config import CITIES # We only need the city list
+# --- App Initialization ---
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
 
-# --- CONFIG ---
-FLASK_API_URL = "http://127.0.0.1:5000/get_data"
+# --- Helper Function ---
+def get_aqi_color_class(category):
+    """Returns a Bootstrap text color class based on the AQI category."""
+    mapping = {
+        "Good": "text-success",
+        "Satisfactory": "text-success", # Lighter green, but success works
+        "Moderate": "text-warning",
+        "Poor": "text-danger",
+        "Very Poor": "text-danger", # Stronger red
+        "Severe": "text-danger",  # Even stronger red
+    }
+    return mapping.get(category, "text-white")
 
-# Setup
-st.set_page_config(page_title="Global AQI Dashboard", page_icon="🌍", layout="wide")
-st.title("☁️ Global Air Quality Monitoring Dashboard")
-st.caption("Powered by the WAQI API (aqicn.org) • Python + Flask + SQLite + NumPy")
+# --- App Layout ---
+app.layout = dbc.Container(fluid=True, children=[
+    # dcc.Store holds data in memory for sharing between callbacks
+    # This will hold our main data for the chart and CSV download
+    dcc.Store(id='history-data-store'),
 
-# Sidebar controls
-city = st.sidebar.selectbox("🌆 Select City", CITIES)
-refresh_rate = st.sidebar.slider("Auto-refresh every (seconds)", 30, 300, 120)
+    # This component is for triggering the CSV download
+    dcc.Download(id="download-csv"),
 
-# Universal auto-refresh
-st.markdown(
-    f"""
-    <meta http-equiv="refresh" content="{refresh_rate}">
-    """,
-    unsafe_allow_html=True
+    # Main Title
+    dbc.Row([
+        dbc.Col(html.H1("Manual AQI Calculator & Data Logger", className="text-center text-white my-4"))
+    ]),
+    
+    dbc.Row([
+        # --- Column 1: Manual Calculator ---
+        dbc.Col(md=4, children=[
+            dbc.Card([
+                dbc.CardHeader(html.H4("Enter Pollutant Values")),
+                dbc.CardBody([
+                    dbc.Input(id='manual-source', placeholder='Source Name (e.g., "Home Sensor")', type='text', className="mb-2"),
+                    html.Hr(),
+                    # Create inputs for all 8 pollutants
+                    dbc.Input(id='manual-pm25', placeholder='PM2.5 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-pm10', placeholder='PM10 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-co', placeholder='CO (mg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-no2', placeholder='NO2 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-so2', placeholder='SO2 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-o3', placeholder='O3 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-nh3', placeholder='NH3 (µg/m³)', type='number', className="mb-2"),
+                    dbc.Input(id='manual-pb', placeholder='Lead (Pb) (µg/m³)', type='number', className="mb-2"),
+                    
+                    dbc.Button("Calculate & Save", id='calculate-button', color='primary', className="w-100 mt-3"),
+                ])
+            ], color="dark", outline=True),
+            
+            dbc.Card([
+                dbc.CardHeader(html.H4("Calculation Result")),
+                # This Div is where the "AQI: 266 (Poor)" message will appear
+                dbc.CardBody(id='calc-output-div', children=[
+                    html.P("Enter values and click 'Calculate' to see the result.")
+                ])
+            ], color="dark", outline=True, className="mt-4")
+        ]),
+        
+        # --- Column 2: History & Chart ---
+        dbc.Col(md=8, children=[
+            dbc.Card([
+                dbc.CardHeader(html.H4("Data History")),
+                dbc.CardBody([
+                    dbc.Button("Download as CSV", id="btn-download-csv", color="secondary", className="mb-3"),
+                    # This Div will hold the data table
+                    html.Div(id='history-table-div')
+                ])
+            ], color="dark", outline=True),
+
+            dbc.Card([
+                dbc.CardHeader(html.H4("Pollutant Chart")),
+                dbc.CardBody([
+                    # The chart will automatically have zoom, pan, and PNG download options
+                    dcc.Graph(id='pollutant-chart')
+                ])
+            ], color="dark", outline=True, className="mt-4")
+        ])
+    ])
+])
+
+# --- Callbacks ---
+
+@callback(
+    # This callback updates TWO things: the result text AND the history data store
+    Output('calc-output-div', 'children'),
+    Output('history-data-store', 'data'), # This triggers the table/chart refresh
+    Input('calculate-button', 'n_clicks'),
+    [State('manual-source', 'value'),
+     State('manual-pm25', 'value'),
+     State('manual-pm10', 'value'),
+     State('manual-co', 'value'),
+     State('manual-no2', 'value'),
+     State('manual-so2', 'value'),
+     State('manual-o3', 'value'),
+     State('manual-nh3', 'value'),
+     State('manual-pb', 'value')],
+    prevent_initial_call=True
 )
-
-# --- DATA FETCHING ---
-@st.cache_data(ttl=60) # Cache data for 60 seconds
-def fetch_data_from_api(selected_city):
-    """Fetches data from our Flask API, not the DB."""
+def handle_manual_calculation(n_clicks, source, pm25, pm10, co, no2, so2, o3, nh3, pb):
+    """
+    Callback for the manual calculation button.
+    Sends data to the Flask API and displays the result.
+    """
     try:
-        response = requests.get(FLASK_API_URL, params={"city": selected_city, "limit": 100}, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        df = pd.DataFrame.from_records(data)
-        # Ensure all numeric columns are correctly typed
-        for col in ['pm25', 'pm10', 'co', 'no2', 'o3', 'so2', 'aqi']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except requests.exceptions.ConnectionError:
-        st.error(f"**Connection Error:** Could not connect to the Flask API at `{FLASK_API_URL}`. Is the backend server (`app.py`) running?")
-        return pd.DataFrame() # Return empty DF
+        payload = {
+            "source": source,
+            "pm25": float(pm25) if pm25 else None,
+            "pm10": float(pm10) if pm10 else None,
+            "co": float(co) if co else None,
+            "no2": float(no2) if no2 else None,
+            "so2": float(so2) if so2 else None,
+            "o3": float(o3) if o3 else None,
+            "nh3": float(nh3) if nh3 else None,
+            "pb": float(pb) if pb else None
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/api/calculate_manual", json=payload)
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # 1. Create the colored result message
+            color_class = get_aqi_color_class(result['category'])
+            result_message = html.Div([
+                html.H3(f"AQI: {result['aqi']}", className=f"font-weight-bold {color_class}"),
+                html.P(f"Category: {result['category']}", className=color_class),
+                html.P(f"Dominant Pollutant: {result['dominant_pollutant']}")
+            ])
+            
+            # 2. Return the message and also update the data store
+            # Updating the store with new data will trigger the next callback
+            return result_message, result 
+        else:
+            return dbc.Alert(f"API Error: {response.text}", color="danger"), dash.no_update
+            
     except Exception as e:
-        st.error(f"An error occurred while fetching data: {e}")
-        return pd.DataFrame()
+        return dbc.Alert(f"An error occurred: {e}", color="danger"), dash.no_update
 
-df = fetch_data_from_api(city)
+@callback(
+    # This callback updates the table and the chart
+    Output('history-table-div', 'children'),
+    Output('pollutant-chart', 'figure'),
+    # It's triggered when the app loads OR when the history-data-store is updated
+    [Input('history-data-store', 'data')] 
+)
+def update_history(new_data):
+    """
+    Fetches all data from the API and updates the history table and chart.
+    """
+    try:
+        # Fetch all data from our new API endpoint
+        api_url = f"{API_BASE_URL}/api/get_all_data"
+        response = requests.get(api_url)
+        data = response.json()
+        
+        if not data:
+            # No data found
+            return html.P("No history data found."), go.Figure()
 
-if df.empty:
-    st.warning(f"No AQI data found for {city}. Waiting for new data from the fetcher...")
-    st.info("Note: This app uses real-time ground station data from aqicn.org.")
-    st.stop()
+        # Convert the JSON data to a pandas DataFrame
+        df = pd.DataFrame(data)
+        
+        # --- 1. Create the History Table ---
+        # We only want to show a few key columns
+        table_df = df[['timestamp', 'source', 'aqi', 'category', 'dominant_pollutant']]
+        # Format the timestamp to be readable
+        table_df['timestamp'] = pd.to_datetime(table_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        history_table = dbc.Table.from_dataframe(
+            table_df, 
+            striped=True, 
+            bordered=True, 
+            hover=True,
+            responsive=True,
+            # dark=True # <-- THIS LINE CAUSED THE ERROR AND IS NOW REMOVED
+        )
+        
+        # --- 2. Create the Pollutant Chart ---
+        # The chart has zoom/pan/download-as-PNG built-in!
+        fig = go.Figure()
+        
+        # We need to reverse the dataframe so the chart shows oldest-to-newest
+        df_chart = df.iloc[::-1] 
+        
+        # Add traces for the main pollutants
+        fig.add_trace(go.Trace(x=df_chart['timestamp'], y=df_chart['pm25_raw'], name='PM2.5', mode='lines+markers'))
+        fig.add_trace(go.Trace(x=df_chart['timestamp'], y=df_chart['pm10_raw'], name='PM10', mode='lines+markers'))
+        fig.add_trace(go.Trace(x=df_chart['timestamp'], y=df_chart['co_raw'], name='CO', mode='lines+markers'))
+        
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font={'color': 'white'},
+            legend_title_text='Pollutants'
+        )
 
-# NumPy-based analysis
-aqi_values = np.array(df["aqi"].dropna())
-pm25_values = np.array(df["pm25"].dropna()) 
-pm10_values = np.array(df["pm10"].dropna())
+        return history_table, fig
 
-# Handle empty arrays after dropna()
-if aqi_values.size == 0:
-    st.warning(f"No valid AQI numbers found for {city} to analyze.")
-    st.stop()
-
-mean_aqi = np.mean(aqi_values)
-max_aqi = np.max(aqi_values)
-std_aqi = np.std(aqi_values)
-
-# Check for correlation
-corr_pm = np.nan
-common_indices = df['pm25'].notna() & df['pm10'].notna()
-if common_indices.sum() > 1:
-    corr_pm = np.corrcoef(df.loc[common_indices, 'pm25'], df.loc[common_indices, 'pm10'])[0, 1]
+    except Exception as e:
+        return dbc.Alert(f"Error loading history: {e}", color="danger"), go.Figure()
 
 
-latest = df.iloc[0]
-aqi = round(latest["aqi"],1)
-category = latest["category"]
+@callback(
+    Output("download-csv", "data"),
+    Input("btn-download-csv", "n_clicks"),
+    State("history-data-store", "data"), # Get data from the store
+    prevent_initial_call=True,
+)
+def download_csv(n_clicks, data):
+    """
+    When the download button is clicked,
+    fetch all data and convert it to a CSV string for download.
+    """
+    # We don't even need the 'data' from the store, we can just fetch fresh
+    api_url = f"{API_BASE_URL}/api/get_all_data?limit=9999" # Get all data
+    response = requests.get(api_url)
+    all_data = response.json()
+    df = pd.DataFrame(all_data)
+    
+    # Convert dataframe to CSV string and send it to the dcc.Download component
+    return dcc.send_data_frame(df.to_csv, "aqi_history.csv", index=False)
 
-# --- SIMPLIFIED COLOR MAP ---
-# We now only need the US EPA categories
-def get_aqi_color(category):
-    return {
-        "Good": "#00e400",
-        "Moderate": "#ffde33",
-        "Unhealthy (Sensitive)": "#ff9933",
-        "Unhealthy": "#cc0033",
-        "Very Unhealthy": "#660099",
-        "Hazardous": "#7e0023"
-    }.get(category, "#cccccc") # Default grey
 
-aqi_color = get_aqi_color(category)
-
-# Layout
-col1, col2, col3 = st.columns([1, 1, 2])
-with col1:
-    st.markdown(
-        f"<div style='padding:1.5rem;border-radius:1rem;background-color:{aqi_color};"
-        f"text-align:center;color:white;font-size:1.5rem;'>"
-        f"<b>{city}</b><br>AQI: <b style='font-size:2rem;'>{aqi}</b><br><i>{category}</i></div>",
-        unsafe_allow_html=True)
-with col2:
-    st.metric("Mean AQI", round(mean_aqi,1))
-    st.metric("Max AQI", int(max_aqi))
-with col3:
-    st.write("### 🧾 Last 5 Readings")
-    st.dataframe(df.head(5)[["timestamp","pm25","pm10","aqi","category"]])
-
-st.divider()
-
-# NumPy Stats
-st.write("### 📈 NumPy-based Analysis (Last 100 Readings)")
-col4, col5, col6, col7 = st.columns(4)
-col4.metric("Mean AQI", round(mean_aqi, 2))
-col5.metric("Max AQI", int(max_aqi))
-col6.metric("Std Dev", round(std_aqi, 2))
-col7.metric("PM2.5↔PM10 Corr.", round(corr_pm, 2), help="Correlation between PM2.5 and PM10")
-
-# Trend Plot
-st.write(f"### 📊 AQI Trend for {city}")
-fig, ax = plt.subplots()
-# Reverse data for plotting (oldest to newest)
-df_plot = df.iloc[::-1].reset_index()
-
-ax.plot(df_plot["timestamp"], df_plot["aqi"], label="Raw AQI", alpha=0.4)
-window = 5
-if len(aqi_values) >= window:
-    # Convolve expects newest data first, so use aqi_values (which is newest-to-oldest)
-    # but then reverse the result for plotting
-    smooth_aqi = np.convolve(aqi_values, np.ones(window)/window, mode='valid')[::-1]
-    ax.plot(df_plot["timestamp"].iloc[window-1:], smooth_aqi, label=f"{window}-pt Smoothed AQI", color="blue", linewidth=2)
-else:
-    ax.plot(df_plot["timestamp"], df_plot["aqi"], label="Smoothed AQI", color="blue", linewidth=2)
-
-ax.plot(df_plot["timestamp"], df_plot["pm25"], label="PM2.5", linestyle="--", alpha=0.7)
-ax.plot(df_plot["timestamp"], df_plot["pm10"], label="PM10", linestyle="--", alpha=0.7)
-
-# Improve x-axis readability
-if len(df_plot) > 10:
-    ax.set_xticks(ax.get_xticks()[::max(1, len(ax.get_xticks()) // 10)])
-plt.xticks(rotation=45)
-ax.legend()
-st.pyplot(fig)
-
-# Category Distribution
-st.write("### 📊 AQI Category Distribution (Last 100)")
-st.bar_chart(df["category"].value_counts())
+# --- Main execution ---
+if __name__ == '__main__':
+    app.run(debug=True, port=8050)

@@ -1,58 +1,66 @@
-import sqlite3
-from config import DB_NAME
+import pymongo
+from datetime import datetime
+from .config import MONGO_URI
 
-def get_db_connection():
-    """Establishes a connection to the DB, waiting if it's locked."""
-    conn = sqlite3.connect(DB_NAME, timeout=10.0)
-    # This line makes the db return dicts instead of tuples,
-    # which works much better with jsonify
-    conn.row_factory = sqlite3.Row 
-    return conn
+# Set up the database client
+try:
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client["aqi_project_db"] # Use a specific DB name
+    aqi_collection = db["aqi_data"]  # Use a specific collection name
+    
+    # Test the connection
+    client.server_info() 
+    print(f"Connected to MongoDB. Using database: {db.name}")
 
-def init_db():
-    """Initializes the database and creates the 'aqi' table if it doesn't exist."""
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS aqi (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 timestamp TEXT,
-                 city TEXT,
-                 pm25 REAL,
-                 pm10 REAL,
-                 co REAL,
-                 no2 REAL,
-                 o3 REAL,
-                 so2 REAL,
-                 aqi REAL,
-                 category TEXT)''')
-    conn.commit()
-    conn.close()
-    print("Database initialized successfully.")
+except Exception as e:
+    print(f"An unknown error occurred during DB initialization: {e}")
+    exit(1)
 
-def insert_data(record):
-    """Inserts a single data record into the database."""
+
+def save_aqi_record(record_data):
+    """
+    Saves a single AQI record (a Python dict) to the database.
+    """
     try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute('''INSERT INTO aqi (timestamp, city, pm25, pm10, co, no2, o3, so2, aqi, category)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', record)
-        conn.commit()
-        conn.close()
-    except sqlite3.Error as e:
-        print(f"Database insert error: {e}")
+        record_data['timestamp'] = datetime.utcnow()
+        aqi_collection.insert_one(record_data)
+        print(f"Record saved for source: {record_data.get('source')}")
+        return True
+    except Exception as e:
+        print(f"Error saving record to MongoDB: {e}")
+        return False
 
-def fetch_latest(city=None, limit=100):
-    """Fetches the latest data records, optionally filtered by city."""
-    conn = get_db_connection()
-    c = conn.cursor()
-    if city:
-        c.execute("SELECT * FROM aqi WHERE city=? ORDER BY id DESC LIMIT ?", (city, limit))
-    else:
-        c.execute("SELECT * FROM aqi ORDER BY id DESC LIMIT ?", (limit,))
-    
-    # .fetchall() will return a list of Row objects (like dicts)
-    rows = c.fetchall() 
-    conn.close()
-    
-    # Convert Row objects to standard dicts for jsonify
-    return [dict(row) for row in rows]
+def get_all_aqi_records(limit=100):
+    """
+    *** NEW FUNCTION ***
+    Fetches the latest 'limit' records from ALL sources.
+    This is for the main history table.
+    """
+    try:
+        # Find all records ({}), exclude "_id", sort by timestamp descending
+        records = aqi_collection.find(
+            {}, 
+            {"_id": 0}
+        ).sort("timestamp", pymongo.DESCENDING).limit(limit)
+        
+        return list(records)
+    except Exception as e:
+        print(f"Error fetching all records from MongoDB: {e}")
+        return []
+
+# This function is no longer used by the new frontend,
+# but we can keep it for future use (e.g., if you want to filter by source again)
+def get_latest_aqi_records(source, limit=100):
+    """
+    Fetches the latest 'limit' records for a specific 'source'.
+    """
+    try:
+        records = aqi_collection.find(
+            {"source": source},
+            {"_id": 0}
+        ).sort("timestamp", pymongo.DESCENDING).limit(limit)
+        
+        return list(records)
+    except Exception as e:
+        print(f"Error fetching records from MongoDB: {e}")
+        return []
