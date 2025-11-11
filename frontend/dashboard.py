@@ -51,10 +51,8 @@ def build_pollutant_chart(df):
     # Use a dark template for the chart
     fig.update_layout(
         template="plotly_dark",
-        # --- FIX: Pitch Black Charts ---
         paper_bgcolor='#000000',  # Pitch black background
         plot_bgcolor='#000000',   # Pitch black plot area
-        # --- END OF FIX ---
         font={'color': '#f0f0f0'},
         legend_title_text='Pollutants',
         xaxis_title="Timestamp (IST)", 
@@ -73,7 +71,7 @@ def create_stat_card(title, value, id_name):
                 html.H3(value, id=id_name, className=f"card-text font-weight-bold")
             ]),
         ),
-        md=4
+        md=3
     )
 
 # --- App Layout ---
@@ -90,17 +88,18 @@ app.layout = html.Div(id='main-wrapper', children=[
         ]),
         
         # --- Statistical Overview Row (TOP) ---
-        dbc.Row(id='stats-row', className="mb-4 justify-content-center", children=[
+        # --- FIX: Added more margin-bottom ---
+        dbc.Row(id='stats-row', className="mb-5 justify-content-center", children=[ # mb-4 to mb-5
             create_stat_card("Average AQI", "-", "avg-aqi-stat"),
             create_stat_card("Max AQI", "-", "max-aqi-stat"),
+            create_stat_card("Std. Deviation", "-", "std-aqi-stat"),
             create_stat_card("Total Records", "-", "total-records-stat"),
         ]),
 
         # --- Collapsible Calculator (YOUR IDEA) ---
-        dbc.Row(className="mb-3", children=[
+        # --- FIX: Added more margin-bottom ---
+        dbc.Row(className="mb-5", children=[ # mb-3 to mb-5
             dbc.Col([
-                # --- THIS IS THE FIX ---
-                # The icon and text must be wrapped in a 'children' list
                 dbc.Button(
                     children=[
                         DashIconify(icon="mdi:calculator", className="me-2"),
@@ -111,7 +110,6 @@ app.layout = html.Div(id='main-wrapper', children=[
                     color="primary",
                     outline=True
                 ),
-                # --- END OF FIX ---
                 dbc.Collapse(
                     dbc.Card(children=[
                         dbc.CardHeader(html.H3("Calculate New AQI")),
@@ -167,8 +165,10 @@ app.layout = html.Div(id='main-wrapper', children=[
         ]),
         
         # --- Main Data Area: Chart and Table ---
-        dbc.Row([
-            dbc.Col(md=7, children=[
+        
+        # --- FIX: Added more margin-bottom ---
+        dbc.Row(className="mb-5", children=[ # mb-4 to mb-5
+            dbc.Col(md=12, children=[
                 dbc.Card(children=[
                     dbc.CardHeader(html.H4("Pollutant History")),
                     dbc.CardBody(dcc.Graph(
@@ -176,8 +176,12 @@ app.layout = html.Div(id='main-wrapper', children=[
                         config={'scrollZoom': True, 'displaylogo': False}
                     ))
                 ])
-            ]),
-            dbc.Col(md=5, children=[
+            ])
+        ]),
+        
+        # --- FIX: Centered and narrowed table ---
+        dbc.Row(className="justify-content-center", children=[ # Center the row
+            dbc.Col(md=10, children=[ # Use 10 of 12 columns
                 dbc.Card(children=[
                     dbc.CardHeader(html.H4(children=[
                         "Data History",
@@ -189,7 +193,7 @@ app.layout = html.Div(id='main-wrapper', children=[
                     ])),
                     dbc.CardBody(html.Div(id='history-table-div'))
                 ])
-            ]),
+            ])
         ])
     ])
 ])
@@ -268,6 +272,7 @@ def update_dashboard_elements(new_data):
         stats_cards = [
             create_stat_card("Average AQI", "-", "avg-aqi-stat"),
             create_stat_card("Max AQI", "-", "max-aqi-stat"),
+            create_stat_card("Std. Deviation", "-", "std-aqi-stat"),
             create_stat_card("Total Records", "-", "total-records-stat"),
         ]
         empty_table = html.P("No history data found. Use the calculator to add data!", className="text-muted")
@@ -286,11 +291,14 @@ def update_dashboard_elements(new_data):
         aqi_values = df['aqi'].values  
         avg_aqi = np.mean(aqi_values)
         max_aqi = np.max(aqi_values)
+        std_aqi = np.std(aqi_values)
         total_records = len(df)
         
         stats_cards = [
             create_stat_card("Average AQI (All Data)", f"{avg_aqi:.1f}", "avg-aqi-stat"),
             create_stat_card("Max AQI (All Data)", f"{max_aqi}", "max-aqi-stat"),
+            create_stat_card("Std. Deviation", f"{std_aqi:.2f}", "std-aqi-stat"),
+        
             create_stat_card("Total Records", f"{total_records}", "total-records-stat"),
         ]
         
@@ -346,28 +354,32 @@ app.clientside_callback(
         var style = document.createElement('style');
         style.innerHTML = `
             body {
-                /* --- FIX: Blue-Green Gradient Background --- */
+                /* Blue-Green Gradient Background */
                 background: linear-gradient(to bottom, #0a2e38, #000000) !important;
                 background-attachment: fixed;
                 color: #f0f0f0 !important;
             }
             .card {
-                /* --- FIX: Semi-transparent cards --- */
+                /* Semi-transparent cards */
                 background-color: rgba(26, 26, 26, 0.8) !important; /* 80% opaque dark card */
                 border: 1px solid #444444 !important;
                 color: #f0f0f0 !important;
+                border-radius: 15px !important; /* Rounded cards */
             }
             .card-header {
                 /* Solid header for contrast */
                 background-color: #121212 !important;
                 border-bottom: 1px solid #444444 !important;
                 font-weight: 600;
+                border-top-left-radius: 15px !important;
+                border-top-right-radius: 15px !important;
             }
             /* Style inputs */
             .form-control, .form-select {
                 background-color: #1a1a1a !important;
                 color: white !important;
                 border-color: #444 !important;
+                border-radius: 10px !important; /* Rounded inputs */
             }
             .form-control:focus, .form-select:focus {
                 color: white !important;
@@ -376,15 +388,24 @@ app.clientside_callback(
                 box-shadow: 0 0 0 0.2rem rgba(13,110,253,.25) !important;
             }
             
-            /* Data Table */
+            /* --- FIX: Rounded Buttons --- */
+            .btn {
+                border-radius: 20px !important; /* "Pill" shape */
+                font-weight: 600 !important;
+                padding: 0.5rem 1rem !important; /* A bit more padding */
+            }
+            
+            /* --- FIX: Larger Table Font --- */
+            .dash-table-container .dash-cell {
+                border-color: #444 !important;
+                font-size: 1.05rem !important; /* Increase font size */
+                line-height: 1.5 !important;
+            }
             .dash-table-container .dash-header {
                 background-color: #121212 !important;
             }
             .dash-table-container .dash-data-row {
                 background-color: #2b2b2b !important;
-            }
-            .dash-table-container .dash-cell {
-                border-color: #444 !important;
             }
         `;
         document.head.appendChild(style);
