@@ -6,7 +6,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 from dash_iconify import DashIconify
-import numpy as np  # <-- EXPLICIT NUMPY IMPORT
+import numpy as np
 
 # --- Configuration ---
 API_BASE_URL = "http://127.0.0.1:5000"
@@ -17,163 +17,198 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 # --- Helper Functions ---
 def get_aqi_color_class(category):
-    """Returns a Bootstrap text color class based on the AQI category."""
+    """
+    Returns a standard, simple Bootstrap text color class.
+    """
     mapping = {
         "Good": "text-success",
-        "Satisfactory": "text-success-light",
+        "Satisfactory": "text-success",
         "Moderate": "text-warning",
-        "Poor": "text-danger-light",
+        "Poor": "text-danger",
         "Very Poor": "text-danger",
-        "Severe": "text-danger-severe",
+        "Severe": "text-danger",
     }
-    return mapping.get(category, "text-white")
+    return mapping.get(category, "text-light") # Default to light text
 
 def build_pollutant_chart(df):
-    """Builds the main pollutant chart with a dark theme."""
+    """Builds the main pollutant chart with the new dark theme."""
     fig = go.Figure()
     df_chart = df.iloc[::-1] # Reverse for plotting
+    
     pollutant_display_names = {
         'pm25_raw': 'PM2.5', 'pm10_raw': 'PM10', 'co_raw': 'CO',
         'no2_raw': 'NO2', 'so2_raw': 'SO2', 'o3_raw': 'O3',
-        'nh3_raw': 'NH3', 'pb_raw': 'Lead (Pb)'
+        'nh3_raw': 'NH3'
     }
+    
     for key, display_name in pollutant_display_names.items():
         if key in df_chart.columns and df_chart[key].notna().any():
             fig.add_trace(go.Trace(
                 x=df_chart['timestamp'], y=df_chart[key], 
                 name=display_name, mode='lines+markers'
             ))
+
+    # Use a dark template for the chart
     fig.update_layout(
-        paper_bgcolor='#000000', plot_bgcolor='#000000',
-        font={'color': 'white'}, legend_title_text='Pollutants',
-        xaxis_title="Timestamp (IST)", yaxis_title="Concentration"
+        template="plotly_dark",
+        # --- FIX: Pitch Black Charts ---
+        paper_bgcolor='#000000',  # Pitch black background
+        plot_bgcolor='#000000',   # Pitch black plot area
+        # --- END OF FIX ---
+        font={'color': '#f0f0f0'},
+        legend_title_text='Pollutants',
+        xaxis_title="Timestamp (IST)", 
+        yaxis_title="Concentration",
+        xaxis=dict(gridcolor='#444444'), # Darker gridlines
+        yaxis=dict(gridcolor='#444444')
     )
     return fig
 
-# --- NEW HELPER FUNCTION ---
-def create_stat_card(title, value, color):
+def create_stat_card(title, value, id_name):
     """Creates a small card for the new statistics row."""
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
                 html.H6(title, className="card-title text-white"),
-                html.H3(value, className=f"card-text font-weight-bold {color}")
+                html.H3(value, id=id_name, className=f"card-text font-weight-bold")
             ]),
-            className="shadow-sm",
-            style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'}
         ),
         md=4
     )
 
 # --- App Layout ---
-app.layout = html.Div(style={
-    'background': 'linear-gradient(to bottom, #0a2e38, #000000)',
-    'minHeight': '100vh',
-    'color': 'white'
-}, children=[
+app.layout = html.Div(id='main-wrapper', children=[
     dcc.Store(id='history-data-store'),
     dcc.Download(id="download-csv"),
     html.Div(id='dummy-input-for-css', style={'display': 'none'}),
     html.Div(id='dummy-output-for-css', style={'display': 'none'}),
 
-    dbc.Container(fluid=True, children=[
+    dbc.Container(fluid=True, className="py-4", children=[
         # Main Title
         dbc.Row([
-            dbc.Col(html.H1("Manual AQI Calculator & Data Logger", className="text-center my-4"))
+            dbc.Col(html.H1("AQI Calculator & Data Logger", className="text-center my-4"))
         ]),
         
-        # --- NEW: Statistical Overview Row ---
+        # --- Statistical Overview Row (TOP) ---
         dbc.Row(id='stats-row', className="mb-4 justify-content-center", children=[
-            # This row will be populated by the callback
-            create_stat_card("Average AQI", "-", "text-white"),
-            create_stat_card("Max AQI", "-", "text-white"),
-            create_stat_card("Std. Deviation", "-", "text-white"),
+            create_stat_card("Average AQI", "-", "avg-aqi-stat"),
+            create_stat_card("Max AQI", "-", "max-aqi-stat"),
+            create_stat_card("Total Records", "-", "total-records-stat"),
         ]),
-        # --- END OF NEW SECTION ---
 
-        # --- Row 1: Chart and Table ---
+        # --- Collapsible Calculator (YOUR IDEA) ---
+        dbc.Row(className="mb-3", children=[
+            dbc.Col([
+                # --- THIS IS THE FIX ---
+                # The icon and text must be wrapped in a 'children' list
+                dbc.Button(
+                    children=[
+                        DashIconify(icon="mdi:calculator", className="me-2"),
+                        "Show/Hide Calculator"
+                    ],
+                    id="collapse-button",
+                    className="mb-3",
+                    color="primary",
+                    outline=True
+                ),
+                # --- END OF FIX ---
+                dbc.Collapse(
+                    dbc.Card(children=[
+                        dbc.CardHeader(html.H3("Calculate New AQI")),
+                        dbc.CardBody([
+                            dbc.Row([
+                                dbc.Col(md=3, children=[
+                                    html.Label("Source Name"),
+                                    dbc.Input(id='manual-source', placeholder='e.g., "Home Sensor"', type='text', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("PM2.5 (µg/m³)"),
+                                    dbc.Input(id='manual-pm25', type='number', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("PM10 (µg/m³)"),
+                                    dbc.Input(id='manual-pm10', type='number', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("CO (mg/m³)"),
+                                    dbc.Input(id='manual-co', type='number', className="mb-2")
+                                ]),
+                            ]),
+                            dbc.Row([
+                                dbc.Col(md=3, children=[
+                                    html.Label("NO2 (µg/m³)"),
+                                    dbc.Input(id='manual-no2', type='number', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("SO2 (µg/m³)"),
+                                    dbc.Input(id='manual-so2', type='number', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("O3 (µg/m³)"),
+                                    dbc.Input(id='manual-o3', type='number', className="mb-2")
+                                ]),
+                                dbc.Col(md=3, children=[
+                                    html.Label("NH3 (µg/m³)"),
+                                    dbc.Input(id='manual-nh3', type='number', className="mb-2")
+                                ]),
+                            ]),
+                            dbc.Row(className="mt-3 align-items-center", children=[
+                                dbc.Col(md=4, children=[
+                                    dbc.Button("Calculate & Save", id='calculate-button', color='primary', size="lg", className="w-100")
+                                ]),
+                                dbc.Col(md=8, id='calc-output-div', className="text-center")
+                            ])
+                        ])
+                    ]),
+                    id="collapse",
+                    is_open=False, # Calculator is HIDDEN by default
+                ),
+            ])
+        ]),
+        
+        # --- Main Data Area: Chart and Table ---
         dbc.Row([
             dbc.Col(md=7, children=[
-                dbc.Card(className="shadow", children=[
+                dbc.Card(children=[
                     dbc.CardHeader(html.H4("Pollutant History")),
                     dbc.CardBody(dcc.Graph(
                         id='pollutant-chart',
                         config={'scrollZoom': True, 'displaylogo': False}
                     ))
-                ], style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'})
+                ])
             ]),
             dbc.Col(md=5, children=[
-                dbc.Card(className="shadow", children=[
+                dbc.Card(children=[
                     dbc.CardHeader(html.H4(children=[
                         "Data History",
                         dbc.Button(
                             DashIconify(icon="fa-solid:download", width=20),
-                            id="btn-download-csv", color="primary",
-                            className="float-end", size="sm"
+                            id="btn-download-csv", color="secondary",
+                            className="float-end", size="sm", outline=True
                         )
                     ])),
                     dbc.CardBody(html.Div(id='history-table-div'))
-                ], style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'})
+                ])
             ]),
-        ]),
-        
-        # --- Row 2: The Calculator ---
-        dbc.Row(className="mt-5 justify-content-center", children=[
-            dbc.Col(md=10, children=[
-                dbc.Card(className="shadow", children=[
-                    dbc.CardHeader(html.H3("Calculate New AQI")),
-                    dbc.CardBody([
-                        dbc.Row([
-                            dbc.Col(md=3, children=[
-                                html.Label("Source Name"),
-                                dbc.Input(id='manual-source', placeholder='e.g., "Home Sensor"', type='text', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("PM2.5 (µg/m³)"),
-                                dbc.Input(id='manual-pm25', type='number', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("PM10 (µg/m³)"),
-                                dbc.Input(id='manual-pm10', type='number', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("CO (mg/m³)"),
-                                dbc.Input(id='manual-co', type='number', className="mb-2")
-                            ]),
-                        ]),
-                        dbc.Row([
-                            dbc.Col(md=3, children=[
-                                html.Label("NO2 (µg/m³)"),
-                                dbc.Input(id='manual-no2', type='number', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("SO2 (µg/m³)"),
-                                dbc.Input(id='manual-so2', type='number', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("O3 (µg/m³)"),
-                                dbc.Input(id='manual-o3', type='number', className="mb-2")
-                            ]),
-                            dbc.Col(md=3, children=[
-                                html.Label("NH3 (µg/m³)"),
-                                dbc.Input(id='manual-nh3', type='number', className="mb-2")
-                            ]),
-                        ]),
-                        dbc.Row(className="mt-3 align-items-center", children=[
-                            dbc.Col(md=4, children=[
-                                dbc.Button("Calculate & Save", id='calculate-button', color='primary', size="lg", className="w-100")
-                            ]),
-                            dbc.Col(md=8, id='calc-output-div', className="text-center")
-                        ])
-                    ])
-                ], style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'})
-            ])
         ])
     ])
 ])
 
 # --- Callbacks ---
 
+# Callback to toggle the calculator
+@callback(
+    Output("collapse", "is_open"),
+    [Input("collapse-button", "n_clicks")],
+    [State("collapse", "is_open")],
+    prevent_initial_call=True,
+)
+def toggle_collapse(n, is_open):
+    if n:
+        return not is_open
+    return is_open
+
+# Callback for the calculator button
 @callback(
     Output('calc-output-div', 'children'),
     Output('history-data-store', 'data'),
@@ -196,11 +231,13 @@ def handle_manual_calculation(n_clicks, source, *pollutant_values):
         
         if response.status_code == 200:
             result = response.json()
+            
             color_class = get_aqi_color_class(result['category'])
+            
             result_message = html.Div([
                 html.H2(f"AQI: {result['aqi']}", className=f"font-weight-bold {color_class}"),
-                html.H4(f"({result['category']})", className=f" {color_class}"),
-                html.P(f"Dominant: {result['dominant_pollutant'].upper()}")
+                html.H4(f"({result['category']})", className=f"{color_class}"),
+                html.P(f"Dominant: {result['dominant_pollutant'].upper()}", className="text-muted")
             ])
             return result_message, result 
         else:
@@ -209,17 +246,18 @@ def handle_manual_calculation(n_clicks, source, *pollutant_values):
     except Exception as e:
         return dbc.Alert(f"An error occurred: {e}", color="danger"), dash.no_update
 
+# Main callback to update the dashboard
 @callback(
-    [Output('stats-row', 'children'),           # <-- NEW OUTPUT
+    [Output('stats-row', 'children'),
      Output('history-table-div', 'children'),
      Output('pollutant-chart', 'figure')],
     [Input('history-data-store', 'data')],
     prevent_initial_call=False
 )
-def update_history_chart_and_stats(new_data):
+def update_dashboard_elements(new_data):
     """
     Fetches all data from the API and updates the history table, chart,
-    AND the new NumPy-powered stat cards.
+    and the stat cards.
     """
     try:
         api_url = f"{API_BASE_URL}/api/get_all_data"
@@ -228,13 +266,15 @@ def update_history_chart_and_stats(new_data):
         
         # Default empty-state values
         stats_cards = [
-            create_stat_card("Average AQI", "-", "text-white"),
-            create_stat_card("Max AQI", "-", "text-white"),
-            create_stat_card("Std. Deviation", "-", "text-white"),
+            create_stat_card("Average AQI", "-", "avg-aqi-stat"),
+            create_stat_card("Max AQI", "-", "max-aqi-stat"),
+            create_stat_card("Total Records", "-", "total-records-stat"),
         ]
-        empty_table = html.P("No history data found. Calculate an AQI to get started!")
+        empty_table = html.P("No history data found. Use the calculator to add data!", className="text-muted")
         empty_fig = go.Figure().update_layout(
-            paper_bgcolor='#000000', plot_bgcolor='#000000', font={'color': 'white'}
+            template="plotly_dark",
+            paper_bgcolor='#000000', plot_bgcolor='#000000', font={'color': 'white'},
+            xaxis=dict(visible=False), yaxis=dict(visible=False)
         )
         
         if not data:
@@ -242,24 +282,18 @@ def update_history_chart_and_stats(new_data):
 
         df = pd.DataFrame(data)
         
-        # --- 1. *** NEW: EXPLICIT NUMPY CALCULATION *** ---
-        # We get the 'aqi' column from the DataFrame. 
-        # .values returns the underlying NumPy array.
+        # --- 1. NumPy Statistics ---
         aqi_values = df['aqi'].values  
-        
-        # Now we use NumPy's functions on the array
         avg_aqi = np.mean(aqi_values)
         max_aqi = np.max(aqi_values)
-        std_aqi = np.std(aqi_values)
+        total_records = len(df)
         
-        # Create the new stat cards
         stats_cards = [
-            create_stat_card("Average AQI (All Data)", f"{avg_aqi:.1f}", "text-primary"),
-            create_stat_card("Max AQI (All Data)", f"{max_aqi}", "text-danger"),
-            create_stat_card("Std. Deviation", f"{std_aqi:.2f}", "text-warning"),
+            create_stat_card("Average AQI (All Data)", f"{avg_aqi:.1f}", "avg-aqi-stat"),
+            create_stat_card("Max AQI (All Data)", f"{max_aqi}", "max-aqi-stat"),
+            create_stat_card("Total Records", f"{total_records}", "total-records-stat"),
         ]
-        # --- END OF NUMPY SECTION ---
-
+        
         # 2. Timezone conversion for display
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
@@ -271,8 +305,8 @@ def update_history_chart_and_stats(new_data):
         history_table = dash_table.DataTable(
             data=table_df.to_dict('records'),
             columns=[{'name': i.replace('_', ' ').title(), 'id': i} for i in table_df.columns],
-            style_cell={'textAlign': 'left', 'backgroundColor': '#333', 'color': 'white'},
-            style_header={'backgroundColor': '#111', 'fontWeight': 'bold'},
+            style_cell={'textAlign': 'left', 'backgroundColor': '#2b2b2b', 'color': 'white', 'border': '1px solid #444'},
+            style_header={'backgroundColor': '#121212', 'fontWeight': 'bold'},
             style_table={'overflowY': 'auto', 'height': '400px'},
             page_size=10,
         )
@@ -285,6 +319,7 @@ def update_history_chart_and_stats(new_data):
     except Exception as e:
         return stats_cards, dbc.Alert(f"Error loading history: {e}", color="danger"), empty_fig
 
+# CSV Download callback
 @callback(
     Output("download-csv", "data"),
     Input("btn-download-csv", "n_clicks"),
@@ -302,41 +337,58 @@ def download_csv(n_clicks):
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
     return dcc.send_data_frame(df.to_csv, "aqi_history.csv", index=False)
 
+
 # --- Custom CSS for new theme ---
+# This injects a <style> tag into the app's <head>
 app.clientside_callback(
     """
     function(n) {
         var style = document.createElement('style');
         style.innerHTML = `
             body {
+                /* --- FIX: Blue-Green Gradient Background --- */
                 background: linear-gradient(to bottom, #0a2e38, #000000) !important;
                 background-attachment: fixed;
+                color: #f0f0f0 !important;
             }
             .card {
-                background-color: rgba(26, 26, 26, 0.8) !important;
-                border: 1px solid #222 !important;
-                color: white !important;
+                /* --- FIX: Semi-transparent cards --- */
+                background-color: rgba(26, 26, 26, 0.8) !important; /* 80% opaque dark card */
+                border: 1px solid #444444 !important;
+                color: #f0f0f0 !important;
             }
             .card-header {
-                background-color: rgba(0, 0, 0, 0.3) !important;
-                border-bottom: 1px solid #222 !important;
+                /* Solid header for contrast */
+                background-color: #121212 !important;
+                border-bottom: 1px solid #444444 !important;
+                font-weight: 600;
             }
-            .dash-table-container .dash-header, 
-            .dash-table-container .dash-data-row {
-                background-color: #333 !important;
+            /* Style inputs */
+            .form-control, .form-select {
+                background-color: #1a1a1a !important;
                 color: white !important;
+                border-color: #444 !important;
             }
+            .form-control:focus, .form-select:focus {
+                color: white !important;
+                background-color: #1a1a1a !important;
+                border-color: #0d6efd !important;
+                box-shadow: 0 0 0 0.2rem rgba(13,110,253,.25) !important;
+            }
+            
+            /* Data Table */
             .dash-table-container .dash-header {
-                background-color: #111 !important;
-                font-weight: bold !important;
+                background-color: #121212 !important;
             }
-            .dash-table-container .dash-cell { border-color: #555 !important; }
-            .text-success-light { color: #a0d64a !important; }
-            .text-danger-light { color: #f28e2c !important; }
-            .text-danger-severe { color: #760013 !important; }
+            .dash-table-container .dash-data-row {
+                background-color: #2b2b2b !important;
+            }
+            .dash-table-container .dash-cell {
+                border-color: #444 !important;
+            }
         `;
         document.head.appendChild(style);
-        return "";
+        return ""; // Return value doesn't matter
     }
     """,
     Output('dummy-output-for-css', 'children'),
