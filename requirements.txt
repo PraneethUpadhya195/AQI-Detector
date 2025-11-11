@@ -4,5 +4,6 @@ dash
 dash-bootstrap-components
 plotly
 pandas
+numpy
 requests
 dash-iconify

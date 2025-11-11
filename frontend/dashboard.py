@@ -5,15 +5,14 @@ import plotly.graph_objects as go
 import requests
 import pandas as pd
 from datetime import datetime
-# This new import is for the download icon
 from dash_iconify import DashIconify
+import numpy as np  # <-- EXPLICIT NUMPY IMPORT
 
 # --- Configuration ---
 API_BASE_URL = "http://127.0.0.1:5000"
 POLLUTANT_LIST = ['pm25', 'pm10', 'co', 'no2', 'so2', 'o3', 'nh3']
 
 # --- App Initialization ---
-# We use a basic theme and override it with our own CSS
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 # --- Helper Functions ---
@@ -21,65 +20,61 @@ def get_aqi_color_class(category):
     """Returns a Bootstrap text color class based on the AQI category."""
     mapping = {
         "Good": "text-success",
-        "Satisfactory": "text-success-light", # A custom class we'll define
+        "Satisfactory": "text-success-light",
         "Moderate": "text-warning",
-        "Poor": "text-danger-light", # A custom class we'll define
+        "Poor": "text-danger-light",
         "Very Poor": "text-danger",
-        "Severe": "text-danger-severe", # A custom class we'll define
+        "Severe": "text-danger-severe",
     }
     return mapping.get(category, "text-white")
 
 def build_pollutant_chart(df):
     """Builds the main pollutant chart with a dark theme."""
     fig = go.Figure()
-    
-    # We need to reverse the dataframe so the chart shows oldest-to-newest
-    df_chart = df.iloc[::-1]
-
-    # Map of internal keys to display names
+    df_chart = df.iloc[::-1] # Reverse for plotting
     pollutant_display_names = {
-        'pm25_raw': 'PM2.5',
-        'pm10_raw': 'PM10',
-        'co_raw': 'CO',
-        'no2_raw': 'NO2',
-        'so2_raw': 'SO2',
-        'o3_raw': 'O3',
-        'nh3_raw': 'NH3',
-        'pb_raw': 'Lead (Pb)'
+        'pm25_raw': 'PM2.5', 'pm10_raw': 'PM10', 'co_raw': 'CO',
+        'no2_raw': 'NO2', 'so2_raw': 'SO2', 'o3_raw': 'O3',
+        'nh3_raw': 'NH3', 'pb_raw': 'Lead (Pb)'
     }
-
     for key, display_name in pollutant_display_names.items():
         if key in df_chart.columns and df_chart[key].notna().any():
             fig.add_trace(go.Trace(
-                x=df_chart['timestamp'], 
-                y=df_chart[key], 
-                name=display_name, 
-                mode='lines+markers'
+                x=df_chart['timestamp'], y=df_chart[key], 
+                name=display_name, mode='lines+markers'
             ))
-
     fig.update_layout(
-        paper_bgcolor='#000000',  # Black paper background
-        plot_bgcolor='#000000',   # Black plot background
-        font={'color': 'white'},
-        legend_title_text='Pollutants',
-        xaxis_title="Timestamp",
-        yaxis_title="Concentration"
+        paper_bgcolor='#000000', plot_bgcolor='#000000',
+        font={'color': 'white'}, legend_title_text='Pollutants',
+        xaxis_title="Timestamp (IST)", yaxis_title="Concentration"
     )
     return fig
 
+# --- NEW HELPER FUNCTION ---
+def create_stat_card(title, value, color):
+    """Creates a small card for the new statistics row."""
+    return dbc.Col(
+        dbc.Card(
+            dbc.CardBody([
+                html.H6(title, className="card-title text-white"),
+                html.H3(value, className=f"card-text font-weight-bold {color}")
+            ]),
+            className="shadow-sm",
+            style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'}
+        ),
+        md=4
+    )
+
 # --- App Layout ---
 app.layout = html.Div(style={
-    'background': 'linear-gradient(to bottom, #0a2e38, #000000)', # Dark green-blue to black
+    'background': 'linear-gradient(to bottom, #0a2e38, #000000)',
     'minHeight': '100vh',
     'color': 'white'
 }, children=[
     dcc.Store(id='history-data-store'),
     dcc.Download(id="download-csv"),
-    
-    # --- FIX 2: Added dummy components for the CSS callback ---
     html.Div(id='dummy-input-for-css', style={'display': 'none'}),
     html.Div(id='dummy-output-for-css', style={'display': 'none'}),
-    # --- End of fix ---
 
     dbc.Container(fluid=True, children=[
         # Main Title
@@ -87,51 +82,47 @@ app.layout = html.Div(style={
             dbc.Col(html.H1("Manual AQI Calculator & Data Logger", className="text-center my-4"))
         ]),
         
-        # --- Row 1: Chart and Table (Your new layout) ---
+        # --- NEW: Statistical Overview Row ---
+        dbc.Row(id='stats-row', className="mb-4 justify-content-center", children=[
+            # This row will be populated by the callback
+            create_stat_card("Average AQI", "-", "text-white"),
+            create_stat_card("Max AQI", "-", "text-white"),
+            create_stat_card("Std. Deviation", "-", "text-white"),
+        ]),
+        # --- END OF NEW SECTION ---
+
+        # --- Row 1: Chart and Table ---
         dbc.Row([
-            # Column 1: Pollutant Chart
             dbc.Col(md=7, children=[
                 dbc.Card(className="shadow", children=[
                     dbc.CardHeader(html.H4("Pollutant History")),
-                    dbc.CardBody([
-                        dcc.Graph(
-                            id='pollutant-chart',
-                            config={'scrollZoom': True, 'displaylogo': False}
-                        )
-                    ])
+                    dbc.CardBody(dcc.Graph(
+                        id='pollutant-chart',
+                        config={'scrollZoom': True, 'displaylogo': False}
+                    ))
                 ], style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'})
             ]),
-            
-            # Column 2: Data History Table
             dbc.Col(md=5, children=[
                 dbc.Card(className="shadow", children=[
                     dbc.CardHeader(html.H4(children=[
                         "Data History",
-                        # Download icon button
                         dbc.Button(
                             DashIconify(icon="fa-solid:download", width=20),
-                            id="btn-download-csv",
-                            color="primary",
-                            className="float-end",
-                            size="sm"
+                            id="btn-download-csv", color="primary",
+                            className="float-end", size="sm"
                         )
                     ])),
-                    dbc.CardBody([
-                        html.Div(id='history-table-div', children=[
-                            # This will be filled by the callback
-                        ])
-                    ])
+                    dbc.CardBody(html.Div(id='history-table-div'))
                 ], style={'backgroundColor': '#1a1a1a', 'border': '1px solid #222'})
             ]),
         ]),
         
-        # --- Row 2: The Calculator (Your new layout) ---
+        # --- Row 2: The Calculator ---
         dbc.Row(className="mt-5 justify-content-center", children=[
             dbc.Col(md=10, children=[
                 dbc.Card(className="shadow", children=[
                     dbc.CardHeader(html.H3("Calculate New AQI")),
                     dbc.CardBody([
-                        # Input Row 1
                         dbc.Row([
                             dbc.Col(md=3, children=[
                                 html.Label("Source Name"),
@@ -150,7 +141,6 @@ app.layout = html.Div(style={
                                 dbc.Input(id='manual-co', type='number', className="mb-2")
                             ]),
                         ]),
-                        # Input Row 2
                         dbc.Row([
                             dbc.Col(md=3, children=[
                                 html.Label("NO2 (µg/m³)"),
@@ -169,12 +159,10 @@ app.layout = html.Div(style={
                                 dbc.Input(id='manual-nh3', type='number', className="mb-2")
                             ]),
                         ]),
-                        # Button and Result Row
                         dbc.Row(className="mt-3 align-items-center", children=[
                             dbc.Col(md=4, children=[
                                 dbc.Button("Calculate & Save", id='calculate-button', color='primary', size="lg", className="w-100")
                             ]),
-                            # This is where the result "AQI: 266 (Poor)" appears
                             dbc.Col(md=8, id='calc-output-div', className="text-center")
                         ])
                     ])
@@ -188,7 +176,7 @@ app.layout = html.Div(style={
 
 @callback(
     Output('calc-output-div', 'children'),
-    Output('history-data-store', 'data'), # This triggers the table/chart refresh
+    Output('history-data-store', 'data'),
     Input('calculate-button', 'n_clicks'),
     [State('manual-source', 'value')] + [State(f'manual-{p}', 'value') for p in POLLUTANT_LIST],
     prevent_initial_call=True
@@ -199,8 +187,7 @@ def handle_manual_calculation(n_clicks, source, *pollutant_values):
     Sends data to the Flask API and displays the result.
     """
     try:
-        # Create the payload dictionary using the pollutant list
-        payload = {"source": source}
+        payload = {"source": source, "pb": None}
         for i, pollutant in enumerate(POLLUTANT_LIST):
             value = pollutant_values[i]
             payload[pollutant] = float(value) if value else None
@@ -209,14 +196,12 @@ def handle_manual_calculation(n_clicks, source, *pollutant_values):
         
         if response.status_code == 200:
             result = response.json()
-            
             color_class = get_aqi_color_class(result['category'])
             result_message = html.Div([
                 html.H2(f"AQI: {result['aqi']}", className=f"font-weight-bold {color_class}"),
                 html.H4(f"({result['category']})", className=f" {color_class}"),
                 html.P(f"Dominant: {result['dominant_pollutant'].upper()}")
             ])
-            
             return result_message, result 
         else:
             return dbc.Alert(f"API Error: {response.text}", color="danger"), dash.no_update
@@ -225,47 +210,80 @@ def handle_manual_calculation(n_clicks, source, *pollutant_values):
         return dbc.Alert(f"An error occurred: {e}", color="danger"), dash.no_update
 
 @callback(
-    Output('history-table-div', 'children'),
-    Output('pollutant-chart', 'figure'),
-    [Input('history-data-store', 'data')], # Triggered by app load or new data
-    prevent_initial_call=False # Run on app load
+    [Output('stats-row', 'children'),           # <-- NEW OUTPUT
+     Output('history-table-div', 'children'),
+     Output('pollutant-chart', 'figure')],
+    [Input('history-data-store', 'data')],
+    prevent_initial_call=False
 )
-def update_history_and_chart(new_data):
+def update_history_chart_and_stats(new_data):
     """
-    Fetches all data from the API and updates the history table and chart.
+    Fetches all data from the API and updates the history table, chart,
+    AND the new NumPy-powered stat cards.
     """
     try:
         api_url = f"{API_BASE_URL}/api/get_all_data"
         response = requests.get(api_url)
         data = response.json()
         
+        # Default empty-state values
+        stats_cards = [
+            create_stat_card("Average AQI", "-", "text-white"),
+            create_stat_card("Max AQI", "-", "text-white"),
+            create_stat_card("Std. Deviation", "-", "text-white"),
+        ]
+        empty_table = html.P("No history data found. Calculate an AQI to get started!")
+        empty_fig = go.Figure().update_layout(
+            paper_bgcolor='#000000', plot_bgcolor='#000000', font={'color': 'white'}
+        )
+        
         if not data:
-            return html.P("No history data found. Calculate an AQI to get started!"), go.Figure().update_layout(
-                paper_bgcolor='#000000', plot_bgcolor='#000000', font={'color': 'white'}
-            )
+            return stats_cards, empty_table, empty_fig
 
         df = pd.DataFrame(data)
         
-        # --- 1. Create the History Table ---
-        table_df = df[['timestamp', 'source', 'aqi', 'category', 'dominant_pollutant']]
-        table_df['timestamp'] = pd.to_datetime(table_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        # --- 1. *** NEW: EXPLICIT NUMPY CALCULATION *** ---
+        # We get the 'aqi' column from the DataFrame. 
+        # .values returns the underlying NumPy array.
+        aqi_values = df['aqi'].values  
+        
+        # Now we use NumPy's functions on the array
+        avg_aqi = np.mean(aqi_values)
+        max_aqi = np.max(aqi_values)
+        std_aqi = np.std(aqi_values)
+        
+        # Create the new stat cards
+        stats_cards = [
+            create_stat_card("Average AQI (All Data)", f"{avg_aqi:.1f}", "text-primary"),
+            create_stat_card("Max AQI (All Data)", f"{max_aqi}", "text-danger"),
+            create_stat_card("Std. Deviation", f"{std_aqi:.2f}", "text-warning"),
+        ]
+        # --- END OF NUMPY SECTION ---
+
+        # 2. Timezone conversion for display
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
+
+        # 3. Create the History Table
+        table_df = df[['timestamp', 'source', 'aqi', 'category', 'dominant_pollutant']].copy()
+        table_df['timestamp'] = table_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
         
         history_table = dash_table.DataTable(
             data=table_df.to_dict('records'),
             columns=[{'name': i.replace('_', ' ').title(), 'id': i} for i in table_df.columns],
             style_cell={'textAlign': 'left', 'backgroundColor': '#333', 'color': 'white'},
             style_header={'backgroundColor': '#111', 'fontWeight': 'bold'},
-            style_table={'overflowY': 'auto', 'height': '400px'}, # Makes table scrollable
+            style_table={'overflowY': 'auto', 'height': '400px'},
             page_size=10,
         )
         
-        # --- 2. Create the Pollutant Chart ---
+        # 4. Create the Pollutant Chart
         chart_fig = build_pollutant_chart(df)
 
-        return history_table, chart_fig
+        return stats_cards, history_table, chart_fig
 
     except Exception as e:
-        return dbc.Alert(f"Error loading history: {e}", color="danger"), go.Figure()
+        return stats_cards, dbc.Alert(f"Error loading history: {e}", color="danger"), empty_fig
 
 @callback(
     Output("download-csv", "data"),
@@ -274,35 +292,27 @@ def update_history_and_chart(new_data):
 )
 def download_csv(n_clicks):
     """
-    When the download button is clicked,
-    fetch all data and convert it to a CSV string for download.
+    Downloads all data as a CSV.
     """
-    # --- THIS IS THE SYNTAX FIX ---
-    api_url = f"{API_BASE_URL}/api/get_all_data?limit=9999" # Get all data
-    # --- END OF FIX ---
-    
+    api_url = f"{API_BASE_URL}/api/get_all_data?limit=9999"
     response = requests.get(api_url)
     all_data = response.json()
     df = pd.DataFrame(all_data)
-    
+    if not df.empty and 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
     return dcc.send_data_frame(df.to_csv, "aqi_history.csv", index=False)
 
-
 # --- Custom CSS for new theme ---
-# This is a hacky way to add CSS in Dash without a separate .css file
 app.clientside_callback(
     """
     function(n) {
-        // Create the <style> tag
         var style = document.createElement('style');
         style.innerHTML = `
             body {
-                /* Your custom gradient */
                 background: linear-gradient(to bottom, #0a2e38, #000000) !important;
                 background-attachment: fixed;
             }
             .card {
-                /* Semi-transparent dark cards */
                 background-color: rgba(26, 26, 26, 0.8) !important;
                 border: 1px solid #222 !important;
                 color: white !important;
@@ -311,32 +321,26 @@ app.clientside_callback(
                 background-color: rgba(0, 0, 0, 0.3) !important;
                 border-bottom: 1px solid #222 !important;
             }
-            /* Style the data table */
             .dash-table-container .dash-header, 
             .dash-table-container .dash-data-row {
                 background-color: #333 !important;
-                color: white !video !important;
+                color: white !important;
             }
             .dash-table-container .dash-header {
                 background-color: #111 !important;
                 font-weight: bold !important;
             }
-            .dash-table-container .dash-cell {
-                border-color: #555 !important;
-            }
-            
-            /* Custom text colors for AQI */
+            .dash-table-container .dash-cell { border-color: #555 !important; }
             .text-success-light { color: #a0d64a !important; }
             .text-danger-light { color: #f28e2c !important; }
             .text-danger-severe { color: #760013 !important; }
         `;
-        // Add it to the document's <head>
         document.head.appendChild(style);
-        return ""; // Return value doesn't matter
+        return "";
     }
     """,
-    Output('dummy-output-for-css', 'children'), # We need an output
-    Input('dummy-input-for-css', 'children') # We need an input
+    Output('dummy-output-for-css', 'children'),
+    Input('dummy-input-for-css', 'children')
 )
 
 # --- Main execution ---
