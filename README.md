@@ -9,10 +9,12 @@ cd your-repo-name
 
 pip install -r requirements.txt
 
-## Setup config.py
+## Setup .env
 
 - Create a mongodb atlas cluster.
-- Add this : MONGO_URI = "mongodb+srv://<username>:<password>@<cluster-url>/<db-name>?retryWrites=true&w=majority"
+- Add this : MONGO_URI = "mongodb+srv://username:password@cluster-url/db-name?appName=clusterName"
+- Create Open Weather Map API Key
+- Add this : OWM_API_KEY = "API Key"
 
 ## Steps to run
 
