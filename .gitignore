@@ -12,9 +12,9 @@ venv/
 
 Secrets
 
-Ignore the config file with database credentials
+Ignore the file with database and api key credentials
 
-backend/config.py
+.env
 
 IDE / OS
 
