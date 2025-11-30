@@ -221,52 +221,61 @@ def fetch_city_aqi(btn_clicks, selected_city, custom_city):
         data = resp.json()
         category = data.get('category')
 
-        # Color map for the Big Number Glow
+        # Colors
         color_map = {
-            "Good": "#4caf50",
-            "Satisfactory": "#aeea00",
-            "Moderate": "#ffea00",
-            "Poor": "#ff9100",
-            "Very Poor": "#ff1744",
-            "Severe": "#b71c1c"
+            "Good": "#4caf50", "Satisfactory": "#aeea00", "Moderate": "#ffea00",
+            "Poor": "#ff9100", "Very Poor": "#ff1744", "Severe": "#b71c1c"
         }
         aq_color = color_map.get(category, "#ffffff")
+
+        # --- NEW: Helper function to create small pollutant boxes ---
+        def pollutant_item(label, value, unit="µg/m³", color="white"):
+            return dbc.Col(
+                className="mb-3", # Margin bottom for spacing
+                width=4,          # 3 items per row (12/4 = 3)
+                children=[
+                    html.Small(label, className="text-muted", style={"fontSize": "0.75rem"}),
+                    html.H5(f"{value}", className="fw-bold", style={"color": color}),
+                    html.Small(unit, className="text-muted", style={"fontSize": "0.6rem"})
+                ]
+            )
 
         card = dbc.Card(className="glass-card text-center h-100", children=[
             dbc.CardBody([
                 html.H5(city.upper(), className="text-muted mb-3"),
                 html.Div([
-                    # Big AQI Number with Glow
                     html.H1(
                         data.get('aqi'), 
                         className="display-1 fw-bold mb-0",
-                        style={
-                            "color": aq_color, 
-                            "textShadow": f"0 0 30px {aq_color}66"
-                        }
+                        style={"color": aq_color, "textShadow": f"0 0 30px {aq_color}66"}
                     ),
-                    # The fixed badge function
                     get_aqi_badge(category)
                 ], className="mb-3"),
                 
                 html.Hr(className="my-3", style={"borderColor": "rgba(255,255,255,0.2)"}),
 
-                dbc.Row([
-                    dbc.Col([html.Small("PM2.5"), html.H5(data.get('pm25_raw'), className="text-info")]),
-                    dbc.Col([html.Small("PM10"), html.H5(data.get('pm10_raw'), className="text-warning")]),
-                    dbc.Col([html.Small("NO2"), html.H5(data.get('no2_raw'), className="text-success")]),
+                # --- UPDATED: DISPLAY ALL POLLUTANTS IN A GRID ---
+                dbc.Row(className="d-flex justify-content-center", children=[
+                    pollutant_item("PM2.5", data.get('pm25_raw'), color="#00d2ff"),
+                    pollutant_item("PM10", data.get('pm10_raw'), color="#3a7bd5"),
+                    pollutant_item("NO2", data.get('no2_raw'), color="#f12711"),
+                    pollutant_item("SO2", data.get('so2_raw'), color="#93f9b9"),
+                    pollutant_item("O3", data.get('o3_raw'), color="#89216b"),
+                    pollutant_item("CO", f"{data.get('co_raw'):.2f}", unit="mg/m³", color="#f5af19"),
+                    pollutant_item("NH3", data.get('nh3_raw'), color="#ffffff"),
                 ]),
                 
-                dbc.Row(className="mt-4", children=[
+                html.Hr(className="my-2", style={"borderColor": "rgba(255,255,255,0.1)"}),
+
+                dbc.Row(className="mt-3", children=[
                     dbc.Col([
                         html.Small("Dominant Pollutant", className="text-muted"),
-                        # --- GLOW IS BACK HERE ---
                         html.H3(
                             str(data.get('dominant_pollutant')).upper(), 
                             style={
                                 'color': '#ff3333', 
                                 'fontWeight': '800',
-                                'textShadow': '0 0 15px rgba(255, 51, 51, 0.6)' # Red Glow
+                                'textShadow': '0 0 15px rgba(255, 51, 51, 0.6)'
                             }
                         )
                     ]),
@@ -282,15 +291,25 @@ def fetch_city_aqi(btn_clicks, selected_city, custom_city):
     [Input('auto-refresh-interval', 'n_intervals'), Input('history-data-store', 'data'), Input('city-dropdown', 'value')]
 )
 def update_dashboard(n, new_data, dropdown_city):
+    # 1. Try to fetch data
     try:
-        data = requests.get(f"{API_BASE_URL}/api/get_all_data", timeout=5).json()
-    except: data = []
+        resp = requests.get(f"{API_BASE_URL}/api/get_all_data", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+        else:
+            # If server returns error, KEEP OLD DATA (Don't wipe screen)
+            return dash.no_update, dash.no_update, dash.no_update
+    except Exception:
+        # If connection fails (timeout/busy), KEEP OLD DATA
+        return dash.no_update, dash.no_update, dash.no_update
     
     # Filter
     target = new_data.get('source') if (new_data and 'source' in new_data) else f"OpenWeatherMap:{dropdown_city}"
     df = pd.DataFrame(data)
     if not df.empty: df = df[df['source'] == target]
 
+    # If filter results in empty data (e.g. searching a new city with no history yet)
+    # Then it is okay to show empty state.
     if df.empty:
         stats = [create_stat_card("Waiting...", "-", f"s{i}", "bx:loader") for i in range(4)]
         return stats, html.P("No records found", className="text-center text-muted"), build_pollutant_chart(pd.DataFrame())
@@ -303,16 +322,20 @@ def update_dashboard(n, new_data, dropdown_city):
         create_stat_card("Records", str(len(df)), "stat-cnt", "bx:data"),
     ]
 
-    # Chart & Table
+    # Cleanup
     df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True).dt.tz_convert('Asia/Kolkata')
-    
-    # --- FIXED: ADDED ALL COLUMNS TO TABLE ---
-    # We define the columns we want to see
-    cols_to_show = ['timestamp', 'aqi', 'category', 'dominant_pollutant', 'pm25_raw', 'pm10_raw', 'no2_raw', 'co_raw']
+    df['timestamp_str'] = df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+    all_pollutants = ['pm25_raw', 'pm10_raw', 'no2_raw', 'co_raw', 'so2_raw', 'o3_raw', 'nh3_raw']
+    for col in all_pollutants:
+        if col in df.columns:
+            df[col] = df[col].round(2)
+
+    cols_to_show = ['timestamp_str', 'aqi', 'category', 'dominant_pollutant'] + [p for p in all_pollutants if p in df.columns]
     
     table = dash_table.DataTable(
         data=df.sort_values('timestamp', ascending=False).to_dict('records'),
-        columns=[{"name": i.replace('_raw', '').replace('_', ' ').upper(), "id": i} for i in cols_to_show],
+        columns=[{"name": i.replace('_raw', '').replace('_str', '').replace('_', ' ').upper(), "id": i} for i in cols_to_show],
         style_header={'backgroundColor': 'rgba(0,0,0,0.5)', 'color': 'white', 'border': 'none', 'fontWeight': 'bold'},
         style_cell={'backgroundColor': 'rgba(255,255,255,0.05)', 'color': '#ddd', 'border': '1px solid #444', 'textAlign': 'center'},
         page_size=10
